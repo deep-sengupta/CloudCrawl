@@ -43,7 +43,7 @@ A lightweight Python CLI wrapper for Cloudflare Browser Rendering's `/crawl` end
 Clone the repository:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/deep-sengupta/CloudCrawl.git
 cd cloudcrawl
 ```
 
