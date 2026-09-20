@@ -32,7 +32,7 @@ A lightweight Python CLI wrapper for Cloudflare Browser Rendering's `/crawl` end
 ## Requirements
 
 * Python 3.6+
-* `requests>=2.32.0`
+* `requests`
 * Cloudflare account
 * Cloudflare API token with Browser Rendering permissions
 
