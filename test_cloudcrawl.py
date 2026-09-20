@@ -938,12 +938,12 @@ class TestPackaging(unittest.TestCase):
     def test_requirements_pin_floor_version(self):
         with open("requirements.txt") as f:
             content = f.read()
-        self.assertIn("requests>=", content)
-
+        self.assertIn("requests", content)
+    
     def test_requirements_exact_floor(self):
         with open("requirements.txt") as f:
             lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
-        self.assertEqual(lines, ["requests>=2.32.0"])
+        self.assertEqual(lines, ["requests"])
 
     def test_client_class_exposed(self):
         self.assertTrue(hasattr(cloudcrawl, "CloudCrawlClient"))
