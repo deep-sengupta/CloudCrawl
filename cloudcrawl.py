@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""CloudCrawl: a Python CLI wrapper around Cloudflare's Browser Rendering
-`/crawl` endpoint.
-
-Docs: https://developers.cloudflare.com/browser-run/quick-actions/crawl-endpoint/
-"""
-
 import argparse
 import json
 import os
@@ -51,10 +45,119 @@ DEFAULT_MAX_PAGES = 1000
 
 FILE_ROOT_ENV = "CLOUDCRAWL_FILE_ROOT"
 
+_RESET = "\x1b[0m"
+_BOLD = "\x1b[1m"
+_CYAN = "\x1b[36m"
+_GREEN = "\x1b[32m"
+_YELLOW = "\x1b[33m"
+_ORANGE = "\x1b[38;5;208m"
+_WHITE = "\x1b[97m"
+
+_BANNER_CLOUD = [
+    " ██████╗██╗      ██████╗ ██╗   ██╗██████╗ ",
+    "██╔════╝██║     ██╔═══██╗██║   ██║██╔══██╗",
+    "██║     ██║     ██║   ██║██║   ██║██║  ██║",
+    "██║     ██║     ██║   ██║██║   ██║██║  ██║",
+    "╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝",
+    " ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝ ",
+]
+
+_BANNER_CRAWL = [
+    " ██████╗██████╗  █████╗ ██╗    ██╗██╗     ",
+    "██╔════╝██╔══██╗██╔══██╗██║    ██║██║     ",
+    "██║     ██████╔╝███████║██║ █╗ ██║██║     ",
+    "██║     ██╔══██╗██╔══██║██║███╗██║██║     ",
+    "╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗",
+    " ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝",
+]
+
+
+def _use_color() -> bool:
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _ascii_name() -> str:
+    if _use_color():
+        rows = [
+            f"{_ORANGE}{cloud}{_WHITE}{crawl}{_RESET}"
+            for cloud, crawl in zip(_BANNER_CLOUD, _BANNER_CRAWL)
+        ]
+    else:
+        rows = [cloud + crawl for cloud, crawl in zip(_BANNER_CLOUD, _BANNER_CRAWL)]
+    return "\n".join(rows)
+
+
+def _looks_like_invocation(candidate: str) -> bool:
+    if candidate.startswith("-"):
+        return True
+    if candidate.startswith("{") and candidate.endswith("}"):
+        return True
+    if re.fullmatch(r"[a-z][a-z0-9_]*", candidate):
+        return True
+    return False
+
+
+_GAP_RE = re.compile(r"^( {2,})(\S(?:.*\S)?)( {2,})(\S.*)$")
+_OWN_RE = re.compile(r"^( {2,})(\S(?:.*\S)?)$")
+_HEADING_RE = re.compile(r"^([A-Za-z][^\n]*):$")
+
+
+def _colorize_help(text: str) -> str:
+    if not _use_color():
+        return text
+    lines = []
+    for line in text.split("\n"):
+        gap_match = _GAP_RE.match(line)
+        if gap_match:
+            indent, invocation, gap, remainder = gap_match.groups()
+            if _looks_like_invocation(invocation):
+                lines.append(f"{indent}{_CYAN}{invocation}{_RESET}{gap}{remainder}")
+            else:
+                lines.append(line)
+            continue
+        own_match = _OWN_RE.match(line)
+        if own_match and _looks_like_invocation(own_match.group(2)):
+            indent, invocation = own_match.groups()
+            lines.append(f"{indent}{_CYAN}{invocation}{_RESET}")
+            continue
+        heading_match = _HEADING_RE.match(line)
+        if heading_match:
+            lines.append(f"{_BOLD}{_YELLOW}{heading_match.group(1)}{_RESET}:")
+            continue
+        if line.startswith("usage:"):
+            lines.append(line.replace("usage:", f"{_BOLD}{_GREEN}usage:{_RESET}", 1))
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+class ColorHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def __init__(self, prog, indent_increment=2, max_help_position=24, width=None, banner=False):
+        super().__init__(prog, indent_increment, max_help_position, width)
+        self._show_banner = banner
+        self._has_body = False
+
+    def add_text(self, text):
+        if text is not None:
+            self._has_body = True
+        super().add_text(text)
+
+    def start_section(self, heading):
+        self._has_body = True
+        super().start_section(heading)
+
+    def format_help(self) -> str:
+        text = _colorize_help(super().format_help())
+        if self._show_banner and self._has_body:
+            text = "\n" + _ascii_name() + "\n\n" + text
+        return text
+
+
+def _root_formatter(prog):
+    return ColorHelpFormatter(prog, banner=True)
+
 
 class CloudCrawlClient:
-    """Thin HTTP client for Cloudflare's Browser Rendering /crawl endpoint."""
-
     def __init__(self, account_id: str, api_token: str, timeout: int = 30) -> None:
         self.account_id = account_id
         self.api_token = api_token
@@ -76,12 +179,6 @@ class CloudCrawlClient:
         return f"{base}/{quote(job_id, safe='')}"
 
     def _request(self, method: str, url: str, **kwargs: Any) -> Dict[str, Any]:
-        """Issue an HTTP request and return the parsed `result` payload.
-
-        Connectivity problems, timeouts, HTTP error statuses and non-JSON
-        response bodies are all raised as ``SystemExit`` with a readable
-        message.
-        """
         try:
             response = requests.request(method, url, timeout=self.timeout, **kwargs)
         except requests.exceptions.RequestException as exc:
@@ -142,12 +239,6 @@ def fetch_all_records(
     params: Dict[str, Any],
     max_pages: int = DEFAULT_MAX_PAGES,
 ) -> Dict[str, Any]:
-    """Follow the `cursor` field across pages and merge all records into one result.
-
-    Raises ``SystemExit`` if the API returns a cursor it has already
-    returned, or if `max_pages` pages have been fetched while more pages
-    remain.
-    """
     params = dict(params)
     merged: Optional[Dict[str, Any]] = None
     records: List[Any] = []
@@ -192,7 +283,6 @@ def fetch_all_records(
 
 
 def _confinement_root() -> Optional[str]:
-    """Return the configured file-root, or None when confinement is disabled."""
     root = os.environ.get(FILE_ROOT_ENV)
     if not root or not root.strip():
         return None
@@ -200,11 +290,6 @@ def _confinement_root() -> Optional[str]:
 
 
 def resolve_path(value: str, label: str) -> str:
-    """Expand a leading `~`, make the path absolute, and apply confinement.
-
-    When `CLOUDCRAWL_FILE_ROOT` is set, the resolved path must live inside
-    that directory. Resolution follows symlinks.
-    """
     if not value or not value.strip():
         raise SystemExit(f"{label}: file path cannot be empty.")
 
@@ -228,11 +313,6 @@ def resolve_path(value: str, label: str) -> str:
 
 
 def load_json_arg(value: str, label: str) -> Any:
-    """Load a JSON value from either an inline JSON string or a file path.
-
-    If `value` looks like inline JSON (starts with `{` or `[`), it is parsed
-    directly. Otherwise it is treated as a path to a JSON file.
-    """
     stripped = value.strip()
     if stripped.startswith("{") or stripped.startswith("["):
         try:
@@ -289,8 +369,6 @@ def _non_negative_int(value: str) -> int:
 
 
 def _bounded_int(minimum: int, maximum: int):
-    """Build an argparse type validator that enforces `minimum <= value <= maximum`."""
-
     def _validator(value: str) -> int:
         try:
             ivalue = int(value)
@@ -306,9 +384,6 @@ def _bounded_int(minimum: int, maximum: int):
 
 
 def _modified_since_timestamp(value: str) -> int:
-    """Validate --modified-since against Cloudflare's documented constraint:
-    the timestamp must be > 0, not in the future, and within the last year.
-    """
     try:
         ivalue = int(value)
     except ValueError:
@@ -332,10 +407,6 @@ _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _job_id(value: str) -> str:
-    """Validate a job-ID positional argument.
-
-    The value must be non-empty and limited to letters, digits, "-" and "_".
-    """
     if not value.strip():
         raise argparse.ArgumentTypeError("job ID cannot be empty")
     if not _JOB_ID_RE.match(value):
@@ -665,14 +736,15 @@ def build_parser() -> argparse.ArgumentParser:
             "CloudCrawl: CLI wrapper around Cloudflare's Browser Rendering /crawl endpoint.\n\n"
             "Docs: https://developers.cloudflare.com/browser-run/quick-actions/crawl-endpoint/"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_root_formatter,
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False, prog="cloudcrawl.py")
 
     start_p = subparsers.add_parser(
         "start",
         help="Start a new crawl job",
+        formatter_class=ColorHelpFormatter,
     )
     parse_common_args(start_p)
     start_p.add_argument(
@@ -882,6 +954,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_p = subparsers.add_parser(
         "status",
         help="Get status for a crawl job",
+        formatter_class=ColorHelpFormatter,
     )
     parse_common_args(status_p)
     parse_cache_ttl_arg(status_p)
@@ -896,6 +969,7 @@ def build_parser() -> argparse.ArgumentParser:
     results_p = subparsers.add_parser(
         "results",
         help="Fetch results for a crawl job",
+        formatter_class=ColorHelpFormatter,
     )
     parse_common_args(results_p)
     parse_cache_ttl_arg(results_p)
@@ -941,6 +1015,7 @@ def build_parser() -> argparse.ArgumentParser:
     wait_p = subparsers.add_parser(
         "wait",
         help="Poll until a crawl job finishes",
+        formatter_class=ColorHelpFormatter,
     )
     parse_common_args(wait_p)
     parse_cache_ttl_arg(wait_p)
@@ -981,6 +1056,7 @@ def build_parser() -> argparse.ArgumentParser:
     cancel_p = subparsers.add_parser(
         "cancel",
         help="Cancel a running crawl job",
+        formatter_class=ColorHelpFormatter,
     )
     parse_common_args(cancel_p)
     cancel_p.add_argument("job_id", type=_job_id, help="Crawl job ID")
@@ -992,6 +1068,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        raise SystemExit(1)
     args.func(args)
 
 
